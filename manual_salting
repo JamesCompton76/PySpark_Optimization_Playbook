@@ -1,0 +1,52 @@
+from pyspark.sql import functions as F
+
+# ---------------------------------------------------------
+# STEP 1: Identify the skew and "salt" the massive fact table
+# ---------------------------------------------------------
+# We will append a random integer (0 to 9) to our join key.
+# This splits the massive key across 10 distinct, smaller partitions.
+
+SALT_FACTOR = 10
+
+# Add a 'salt' column with a random integer between 0 and 9
+salted_telemetry_df = telemetry_df.withColumn(
+    "salt", 
+    F.concat_with_ranges_or_random(F.floor(F.rand() * SALT_FACTOR)) # Generates 0-9
+)
+
+# Create the new composite join key (e.g., "HVAC_102_3")
+salted_telemetry_df = salted_telemetry_df.withColumn(
+    "salted_join_key", 
+    F.concat(F.col("hvac_id"), F.lit("_"), F.col("salt"))
+)
+
+
+# ---------------------------------------------------------
+# STEP 2: Replicate (Explode) the small lookup table
+# ---------------------------------------------------------
+# Because the fact table now has keys like "HVAC_102_0" through "HVAC_102_9",
+# we must copy the lookup rows 10 times to match all possible salt values.
+
+# Create an array of integers [0, 1, 2, ..., 9]
+salt_array = F.array([F.lit(i) for i in range(SALT_FACTOR)])
+
+exploded_lookup_df = lookup_df.withColumn("salt", F.explode(salt_array))
+
+# Create the identical composite join key (e.g., "HVAC_102_3")
+exploded_lookup_df = exploded_lookup_df.withColumn(
+    "salted_join_key", 
+    F.concat(F.col("hvac_id"), F.lit("_"), F.col("salt"))
+)
+
+
+# ---------------------------------------------------------
+# STEP 3: Perform the Join on the Salted Key
+# ---------------------------------------------------------
+# Because the data is now completely evenly distributed on both sides, 
+# Spark can run the join across the cluster without any bottleneck partitions.
+
+optimized_joined_df = salted_telemetry_df.join(
+    exploded_lookup_df,
+    on="salted_join_key",
+    how="inner"
+).drop("salted_join_key", "salt") # Clean up temporary salting columns
