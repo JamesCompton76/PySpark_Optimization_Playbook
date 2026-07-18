@@ -53,4 +53,4 @@ Before applying complex transformations, modern data pipelines should adhere to 
    * **Variable Replication:** Replaces static list comprehensions with dynamic SQL `sequence()` functions to generate variable-length arrays row-by-row in the dimension table.
    * **Use Case:** Essential for multi-terabyte pipelines operating under strict, cost-constrained cluster environments where blanket salting would cause Out of Memory (OOM) failures on smaller heavy-hitters.
    * **Execution Note:** Requires prior knowledge of data distribution or a pre-query to calculate the required bin map dynamically.
-   </details>[cite: 11]
+   </details>
