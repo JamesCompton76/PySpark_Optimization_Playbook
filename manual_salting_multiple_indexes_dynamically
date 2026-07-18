@@ -21,3 +21,24 @@ fact_salted = df_fact.withColumn(
         F.concat(F.col("asset_id"), F.lit("_"), F.floor(F.rand() * F.col("dynamic_salt_bins")).cast("string"))
     ).otherwise(F.col("asset_id"))
 ).drop("dynamic_salt_bins")
+
+# 2. Explode the Dimension Table dynamically
+# Isolate skewed rows, map their specific bin count, and generate a dynamic sequence array to explode
+dim_skewed = df_dim.withColumn("dynamic_salt_bins", mapping_expr.getItem(F.col("asset_id"))) \
+    .filter(F.col("dynamic_salt_bins").isNotNull()) \
+    .withColumn("salt_array", F.expr("sequence(0, dynamic_salt_bins - 1)")) \
+    .withColumn("salt_val", F.explode("salt_array")) \
+    .withColumn("join_key", F.concat(F.col("asset_id"), F.lit("_"), F.col("salt_val").cast("string"))) \
+    .drop("dynamic_salt_bins", "salt_array", "salt_val")
+
+# Isolate the normal rows
+dim_normal = df_dim.withColumn("dynamic_salt_bins", mapping_expr.getItem(F.col("asset_id"))) \
+    .filter(F.col("dynamic_salt_bins").isNull()) \
+    .withColumn("join_key", F.col("asset_id")) \
+    .drop("dynamic_salt_bins")
+
+# Union them back together
+dim_salted = dim_skewed.unionByName(dim_normal)
+
+# 3. Perform the optimized join on the new dynamic salted keys
+final_df = fact_salted.join(dim_salted, on="join_key", how="left")
