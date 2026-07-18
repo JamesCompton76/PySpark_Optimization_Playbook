@@ -1,0 +1,30 @@
+import pyspark.sql.functions as F
+
+salt_bins = 10
+
+# 1. Salt the Fact Table (Only apply the random salt to the skewed key)
+fact_salted = df_fact.withColumn(
+    "join_key",
+    F.when(
+        F.col("asset_id") == "HOSPITAL", 
+        F.concat(F.col("asset_id"), F.lit("_"), F.floor(F.rand() * salt_bins).cast("string"))
+    ).otherwise(F.col("asset_id"))
+)
+
+# 2. Explode the Dimension Table (Replicate ONLY the skewed lookup row 10 times)
+# Create the exploded skewed rows
+dim_skewed = df_dim.filter(F.col("asset_id") == "HOSPITAL") \
+    .withColumn("salt_array", F.array([F.lit(i) for i in range(salt_bins)])) \
+    .withColumn("salt_val", F.explode("salt_array")) \
+    .withColumn("join_key", F.concat(F.col("asset_id"), F.lit("_"), F.col("salt_val").cast("string"))) \
+    .drop("salt_array", "salt_val")
+
+# Isolate the normal rows
+dim_normal = df_dim.filter(F.col("asset_id") != "HOSPITAL") \
+    .withColumn("join_key", F.col("asset_id"))
+
+# Union them back together
+dim_salted = dim_skewed.unionByName(dim_normal)
+
+# 3. Perform the optimized join on the new salted keys
+final_df = fact_salted.join(dim_salted, on="join_key", how="left")
