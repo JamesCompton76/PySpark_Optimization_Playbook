@@ -9,6 +9,8 @@ Before applying complex transformations, modern data pipelines should adhere to 
 
 ## PySpark Scripts
 
+### 1. Broadcast Strategies
+
 1. **[broadcast_join.py](./broadcast_join.py)** - One-click implementation to force a broadcast join on small lookup tables.
    
    <details>
@@ -20,7 +22,9 @@ Before applying complex transformations, modern data pipelines should adhere to 
    * **Execution Note:** Only use this when the dimension table is comfortably smaller than the `spark.sql.autoBroadcastJoinThreshold` (default 10MB, safely configurable up to ~1GB depending on cluster memory limits).
    </details>
 
-2. **[manual_salting_single.py](./manual_salting_single.py)** - Targeted index salting for a single heavily skewed key.
+### 2. Salting Strategies
+
+1. **[manual_salting_single.py](./manual_salting_single.py)** - Targeted index salting for a single heavily skewed key.
    
    <details>
    <summary><i>Click to expand architectural breakdown</i></summary>
@@ -32,7 +36,7 @@ Before applying complex transformations, modern data pipelines should adhere to 
    * **Use Case:** Ideal for pipelines where a single entity (like a massive facility or headquarters) generates the vast majority of telemetry.
    </details>
 
-3. **[manual_salting_multiple.py](./manual_salting_multiple.py)** - Targeted index salting for multiple skewed keys using a uniform salt factor.
+2. **[manual_salting_multiple.py](./manual_salting_multiple.py)** - Targeted index salting for multiple skewed keys using a uniform salt factor.
    
    <details>
    <summary><i>Click to expand architectural breakdown</i></summary>
@@ -43,7 +47,7 @@ Before applying complex transformations, modern data pipelines should adhere to 
    * **Guaranteed Resource Cleanup:** Ensures the inverse records are safely isolated using the `~` operator and unioned back into the dataframe without missing data.
    </details>
 
-4. **[manual_salting_dynamic.py](./manual_salting_dynamic.py)** - Advanced dynamic salting assigning specific bin counts based on data volume.
+3. **[manual_salting_dynamic.py](./manual_salting_dynamic.py)** - Advanced dynamic salting assigning specific bin counts based on data volume.
    
    <details>
    <summary><i>Click to expand architectural breakdown</i></summary>
@@ -54,3 +58,10 @@ Before applying complex transformations, modern data pipelines should adhere to 
    * **Use Case:** Essential for multi-terabyte pipelines operating under strict, cost-constrained cluster environments where blanket salting would cause Out of Memory (OOM) failures on smaller heavy-hitters.
    * **Execution Note:** Requires prior knowledge of data distribution or a pre-query to calculate the required bin map dynamically.
    </details>
+
+## Architectural Notes & Memory Management
+
+* **How Broadcast Joins Work:** When a broadcast join is triggered, Spark pulls the entire dimension table into the **Driver Node's** memory first. The Driver then serializes it and broadcasts a complete, identical copy to the memory of every individual **Worker Node** in the cluster. This allows the worker nodes to join the fact table locally without executing an expensive network shuffle.
+* **What is "Small Enough"?** By default, Spark's `spark.sql.autoBroadcastJoinThreshold` is set to exactly 10MB. However, you can safely tune this threshold up to 1GB or even 2GB, provided your table is genuinely that small when compressed in memory *and* your Driver Node has enough RAM allocated to handle it.
+* **When to Allocate More Memory:** If you have a "Monster Dimension" (e.g., a 4GB customer table) that you desperately want to broadcast to avoid a catastrophic Sort-Merge Join, you must explicitly increase the Driver's memory allocation (`spark.driver.memory`). If you cannot physically allocate enough Driver RAM to hold the table, broadcasting will crash the pipeline with an Out of Memory (OOM) error, and you must fall back to Targeted Salting.
+* **Enterprise Execution (Palantir Foundry):** In managed enterprise platforms like Palantir Foundry, hardcoding cluster configurations via `spark.driver.memory` or `spark.sql.shuffle.partitions` inside the Python logic is considered an anti-pattern. Instead, infrastructure scaling is decoupled from the code. Driver and executor memory are scaled by assigning specific **Spark Profiles** (e.g., `EXECUTOR_MEMORY_LARGE` or `SHUFFLE_PARTITIONS_HIGH`) directly to the dataset via the UI, keeping the actual transformation scripts purely focused on data logic.
