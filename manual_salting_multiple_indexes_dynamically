@@ -1,0 +1,23 @@
+import pyspark.sql.functions as F
+from itertools import chain
+
+# Define specific salt bins for each key based on their row counts
+salt_map = {
+    "HOSPITAL_A": 100, 
+    "HOSPITAL_B": 5,
+    "FACTORY_1": 20
+}
+
+# Convert the Python dictionary into a PySpark map column expression
+mapping_expr = F.create_map([F.lit(x) for x in chain(*salt_map.items())])
+
+# 1. Salt the Fact Table dynamically
+fact_salted = df_fact.withColumn(
+    "dynamic_salt_bins", mapping_expr.getItem(F.col("asset_id"))
+).withColumn(
+    "join_key",
+    F.when(
+        F.col("dynamic_salt_bins").isNotNull(), 
+        F.concat(F.col("asset_id"), F.lit("_"), F.floor(F.rand() * F.col("dynamic_salt_bins")).cast("string"))
+    ).otherwise(F.col("asset_id"))
+).drop("dynamic_salt_bins")
